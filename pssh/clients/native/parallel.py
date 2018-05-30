@@ -106,7 +106,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
         self.proxy_user = proxy_user
         self.proxy_password = proxy_password
         self.forward_ssh_agent = forward_ssh_agent
-        self._tunnels = {}
+        self._tunnel = None
 
     def run_command(self, command, sudo=False, user=None, stop_on_errors=True,
                     use_pty=False, host_args=None, shell=None,
@@ -291,8 +291,8 @@ class ParallelSSHClient(BaseParallelSSHClient):
         return channel.get_exit_status()
 
     def _start_tunnel(self, host):
-        if host in self._tunnels:
-            return self._tunnels[host]
+        if self._tunnel is not None:
+            return self._tunnel
         tunnel = Tunnel(
             self.proxy_host, host, self.port, user=self.proxy_user,
             password=self.proxy_password, port=self.proxy_port,
@@ -309,7 +309,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
                       "Exception from tunnel client: %s"
                 logger.error(msg, tunnel.exception)
                 raise ProxyError(msg, tunnel.exception)
-        self._tunnels[host] = tunnel
+        self._tunnel = tunnel
         return tunnel
 
     def _make_ssh_client(self, host):

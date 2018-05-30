@@ -36,17 +36,16 @@ import time
 
 
 import gevent
-from pssh.clients.native import ParallelSSHClient, logger as pssh_logger
+from pssh.clients.native import ParallelSSHClient
 from pssh.exceptions import UnknownHostException, \
     AuthenticationException, ConnectionErrorException, SessionError, \
     HostArgumentException, SFTPError, SFTPIOError, Timeout, SCPError, \
     ProxyError
+from pssh import logger as pssh_logger
 
 from .embedded_server.embedded_server import make_socket
 from .embedded_server.openssh import OpenSSHServer
 from .base_ssh2_test import PKEY_FILENAME, PUB_FILE
-# from pssh.utils import load_private_key
-# from pssh.agent import SSHAgent
 
 
 pssh_logger.setLevel(logging.DEBUG)
@@ -1513,6 +1512,7 @@ class ParallelSSHClientTest(unittest.TestCase):
             proxy_pkey=self.user_key,
             timeout=2)
         output = client.run_command(self.cmd, stop_on_errors=False)
+        client.join(output)
         self.assertEqual(self.host, list(output.keys())[0])
         del client
         server.stop()
@@ -1525,9 +1525,26 @@ class ParallelSSHClientTest(unittest.TestCase):
             proxy_pkey=self.user_key,
             timeout=2)
         output = client.run_command(self.cmd, stop_on_errors=False)
+        client.join(output)
         exc = output[self.host].exception
         self.assertIsInstance(exc, ProxyError)
         self.assertIsInstance(exc.args[1], ConnectionErrorException)
+
+    def test_tunnel_accept_failure(self):
+        proxy_host = '127.0.0.9'
+        server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
+        server.start_server()
+        hosts = [self.host, self.host, self.host]
+        client = ParallelSSHClient(
+            hosts, port=self.port, pkey=self.user_key,
+            proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
+            proxy_pkey=self.user_key,
+            timeout=2)
+        output = client.run_command(self.cmd, stop_on_errors=False)
+        client.join(output)
+        self.assertEqual(len(hosts), len(list(output.keys())))
+        del client
+        server.stop()
 
 #     def test_proxy_remote_host_failure_timeout(self):
 #         """Test that timeout setting is passed on to proxy to be used for the

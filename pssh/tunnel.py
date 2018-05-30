@@ -44,8 +44,6 @@ class Tunnel(Thread):
         self.listen_port = listen_port
         self.fw_host = fw_host
         self.fw_port = fw_port if fw_port else 22
-        self.channel = None
-        self.forward_sock = None
         self.host = host
         self.port = port
         self.user = user
@@ -58,20 +56,21 @@ class Tunnel(Thread):
         self.exception = None
         self.tunnel_open = Event()
 
-    def _read_forward_sock(self):
+    def _read_forward_sock(self, forward_sock, channel):
         while True:
             logger.debug("Waiting on forward socket read")
-            data = self.forward_sock.recv(1024)
+            data = forward_sock.recv(1024)
             data_len = len(data)
             if data_len == 0:
-                logger.error("Client disconnected")
-                return
+                continue
+                # logger.error("Client disconnected")
+                # return
             data_written = 0
-            rc = self.channel.write(data)
+            rc = channel.write(data)
             while data_written < data_len:
                 if rc == LIBSSH2_ERROR_EAGAIN:
                     logger.debug("Waiting on channel write")
-                    wait_select(self.channel.session)
+                    wait_select(channel.session)
                     continue
                 elif rc < 0:
                     logger.error("Channel write error %s", rc)
@@ -79,29 +78,29 @@ class Tunnel(Thread):
                 data_written += rc
                 logger.debug(
                     "Wrote %s bytes from forward socket to channel", rc)
-                rc = self.channel.write(data[data_written:])
+                rc = channel.write(data[data_written:])
             logger.debug("Total channel write size %s from %s received",
                          data_written, data_len)
 
-    def _read_channel(self):
+    def _read_channel(self, forward_sock, channel):
         while True:
-            size, data = self.channel.read()
+            size, data = channel.read()
             while size == LIBSSH2_ERROR_EAGAIN or size > 0:
                 if size == LIBSSH2_ERROR_EAGAIN:
                     logger.debug("Waiting on channel")
-                    wait_select(self.channel.session)
-                    size, data = self.channel.read()
+                    wait_select(channel.session)
+                    size, data = channel.read()
                 elif size < 0:
                     logger.error("Error reading from channel")
                     return
                 while size > 0:
                     logger.debug("Read %s from channel..", size)
-                    self.forward_sock.sendall(data)
+                    forward_sock.sendall(data)
                     logger.debug("Forwarded %s bytes from channel", size)
-                    size, data = self.channel.read()
-            if self.channel.eof():
-                logger.debug("Channel closed")
-                return
+                    size, data = channel.read()
+            # if channel.eof():
+            #     logger.debug("Channel closed")
+            #     return
 
     def _init_tunnel_sock(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -120,6 +119,14 @@ class Tunnel(Thread):
                                 timeout=self.timeout)
         self.session = self.client.session
 
+    def _cleanup(self):
+        self.session.set_blocking(1)
+        self.session.disconnect()
+        del self.session
+        del self.client
+        self.client = None
+        self.session = None
+
     def run(self):
         try:
             self._init_tunnel_client()
@@ -133,25 +140,36 @@ class Tunnel(Thread):
             while True:
                 logger.debug("Tunnel waiting for connection")
                 self.tunnel_open.set()
-                self.forward_sock, forward_addr = self.socket.accept()
+                forward_sock, forward_addr = self.socket.accept()
                 logger.debug("Client connected, forwarding %s:%s on"
                              " remote host to local %s",
-                             self.fw_host, self.fw_port,
-                             forward_addr)
-                self.session.set_blocking(1)
-                self.channel = self.session.direct_tcpip_ex(
-                    self.fw_host, self.fw_port, '127.0.0.1', forward_addr[1])
-                if self.channel is None:
-                    self.forward_sock.close()
-                    self.socket.close()
-                    raise Exception("Could not establish channel to %s:%s",
-                                    self.fw_host, self.fw_port)
-                self.session.set_blocking(0)
-                source = spawn(self._read_forward_sock)
-                dest = spawn(self._read_channel)
-                joinall((source, dest))
-                self.channel.close()
-                self.forward_sock.close()
+                             self.fw_host, self.fw_port, forward_addr)
+                try:
+                    # self.session.set_blocking(0)
+                    channel = self.session.direct_tcpip_ex(
+                        self.fw_host, self.fw_port, '127.0.0.1',
+                        forward_addr[1])
+                    while channel == LIBSSH2_ERROR_EAGAIN:
+                        wait_select(self.session)
+                        channel = self.session.direct_tcpip_ex(
+                            self.fw_host, self.fw_port, '127.0.0.1',
+                            forward_addr[1])
+                except Exception as ex:
+                    logger.error("Could not establish channel to %s:%s - %s",
+                                 self.fw_host, self.fw_port, ex)
+                    self.exception = ex
+                    continue
+                # self.session.set_blocking(0)
+                source = spawn(self._read_forward_sock, forward_sock, channel)
+                dest = spawn(self._read_channel, forward_sock, channel)
+                joinall((source, dest), raise_error=True)
+                channel.close()
+                forward_sock.close()
+        except Exception as ex:
+            msg = "Tunnel caught exception - %s"
+            logger.error(msg, ex)
+            self.exception = ex
         finally:
             if not self.socket.closed:
                 self.socket.close()
+            self._cleanup()
