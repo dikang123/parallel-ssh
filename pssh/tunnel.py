@@ -18,7 +18,7 @@
 from threading import Thread, Event
 import logging
 
-from gevent import socket, spawn, joinall, get_hub
+from gevent import socket, spawn, joinall, get_hub, sleep
 
 from ssh2.error_codes import LIBSSH2_ERROR_EAGAIN
 
@@ -32,18 +32,17 @@ logger = logging.getLogger(__name__)
 
 class Tunnel(Thread):
 
-    def __init__(self, host, fw_host, fw_port, user=None,
+    def __init__(self, host, in_q, out_q, user=None,
                  password=None, port=None, pkey=None,
                  num_retries=DEFAULT_RETRIES,
                  retry_delay=RETRY_DELAY,
-                 allow_agent=True, timeout=None, listen_port=0):
+                 allow_agent=True, timeout=None):
         Thread.__init__(self)
         self.client = None
         self.session = None
-        self.socket = None
-        self.listen_port = listen_port
-        self.fw_host = fw_host
-        self.fw_port = fw_port if fw_port else 22
+        self._sockets = []
+        self.in_q = in_q
+        self.out_q = out_q
         self.host = host
         self.port = port
         self.user = user
@@ -55,6 +54,7 @@ class Tunnel(Thread):
         self.timeout = timeout
         self.exception = None
         self.tunnel_open = Event()
+        self.tunnels = []
 
     def _read_forward_sock(self, forward_sock, channel):
         while True:
@@ -70,7 +70,8 @@ class Tunnel(Thread):
             while data_written < data_len:
                 if rc == LIBSSH2_ERROR_EAGAIN:
                     logger.debug("Waiting on channel write")
-                    wait_select(channel.session)
+                    wait_select(channel.session, timeout=.001)
+                    rc = channel.write(data)
                     continue
                 elif rc < 0:
                     logger.error("Channel write error %s", rc)
@@ -87,8 +88,8 @@ class Tunnel(Thread):
             size, data = channel.read()
             while size == LIBSSH2_ERROR_EAGAIN or size > 0:
                 if size == LIBSSH2_ERROR_EAGAIN:
-                    logger.debug("Waiting on channel")
-                    wait_select(channel.session)
+                    logger.debug("Waiting on channel read")
+                    wait_select(channel.session, timeout=.001)
                     size, data = channel.read()
                 elif size < 0:
                     logger.error("Error reading from channel")
@@ -103,12 +104,12 @@ class Tunnel(Thread):
             #     return
 
     def _init_tunnel_sock(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind(('127.0.0.1', self.listen_port))
-        self.socket.listen(0)
-        self.listen_port = self.socket.getsockname()[1]
-        logger.debug("Tunnel listening on 127.0.0.1:%s on hub %s",
-                     self.listen_port, get_hub())
+        tunnel_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tunnel_socket.bind(('127.0.0.1', 0))
+        tunnel_socket.listen(0)
+        listen_port = tunnel_socket.getsockname()[1]
+        self._sockets.append(tunnel_socket)
+        return tunnel_socket, listen_port
 
     def _init_tunnel_client(self):
         self.client = SSHClient(self.host, user=self.user, port=self.port,
@@ -120,56 +121,75 @@ class Tunnel(Thread):
         self.session = self.client.session
 
     def _cleanup(self):
-        self.session.set_blocking(1)
-        self.session.disconnect()
-        del self.session
-        del self.client
-        self.client = None
-        self.session = None
+        for _sock in self._sockets:
+            try:
+                _sock.close()
+            except Exception as ex:
+                logger.error(ex)
+        if self.session is not None:
+            self.session.set_blocking(1)
+            self.session.disconnect()
+            del self.session
+            del self.client
+            self.client = None
+            self.session = None
+
+    def _consume_q(self):
+        host, port = self.in_q.get()
+        logger.debug("Got request for tunnel to %s:%s", host, port)
+        tunnel = spawn(self._start_tunnel, host, port)
+        self.tunnels.append(tunnel)
+        tunnel.get()
+
+    def _start_tunnel(self, fw_host, fw_port):
+        listen_socket, listen_port = self._init_tunnel_sock()
+        self.out_q.put(listen_port)
+        self.tunnel_open.set()
+        logger.debug("Tunnel listening on 127.0.0.1:%s on hub %s",
+                     listen_port, get_hub().thread_ident)
+        forward_sock, forward_addr = listen_socket.accept()
+        logger.debug("Client connected, forwarding %s:%s on"
+                     " remote host to local %s",
+                     fw_host, fw_port, forward_addr)
+        try:
+            self.session.set_blocking(1)
+            channel = self.session.direct_tcpip_ex(
+                fw_host, fw_port, '127.0.0.1',
+                forward_addr[1])
+            while channel == LIBSSH2_ERROR_EAGAIN:
+                wait_select(self.session)
+                channel = self.session.direct_tcpip_ex(
+                    fw_host, fw_port, '127.0.0.1',
+                    forward_addr[1])
+        except Exception as ex:
+            logger.error("Could not establish channel to %s:%s - %s",
+                         fw_host, fw_port, ex)
+            self.exception = ex
+            return
+        finally:
+            self.session.set_blocking(0)
+        logger.debug("Spawning read/write greenlets")
+        source = spawn(self._read_forward_sock, forward_sock, channel)
+        dest = spawn(self._read_channel, forward_sock, channel)
+        logger.debug("Waiting for read/write greenlets")
+        joinall((source, dest), raise_error=True)
+        channel.close()
+        forward_sock.close()
 
     def run(self):
         try:
             self._init_tunnel_client()
-            self._init_tunnel_sock()
         except Exception as ex:
             logger.error("Tunnel initilisation failed with %s", ex)
             self.exception = ex
             return
-        logger.debug("Hub in run function: %s", get_hub())
-        try:
-            while True:
-                logger.debug("Tunnel waiting for connection")
-                self.tunnel_open.set()
-                forward_sock, forward_addr = self.socket.accept()
-                logger.debug("Client connected, forwarding %s:%s on"
-                             " remote host to local %s",
-                             self.fw_host, self.fw_port, forward_addr)
-                try:
-                    # self.session.set_blocking(0)
-                    channel = self.session.direct_tcpip_ex(
-                        self.fw_host, self.fw_port, '127.0.0.1',
-                        forward_addr[1])
-                    while channel == LIBSSH2_ERROR_EAGAIN:
-                        wait_select(self.session)
-                        channel = self.session.direct_tcpip_ex(
-                            self.fw_host, self.fw_port, '127.0.0.1',
-                            forward_addr[1])
-                except Exception as ex:
-                    logger.error("Could not establish channel to %s:%s - %s",
-                                 self.fw_host, self.fw_port, ex)
-                    self.exception = ex
-                    continue
-                # self.session.set_blocking(0)
-                source = spawn(self._read_forward_sock, forward_sock, channel)
-                dest = spawn(self._read_channel, forward_sock, channel)
-                joinall((source, dest), raise_error=True)
-                channel.close()
-                forward_sock.close()
-        except Exception as ex:
-            msg = "Tunnel caught exception - %s"
-            logger.error(msg, ex)
-            self.exception = ex
-        finally:
-            if not self.socket.closed:
-                self.socket.close()
-            self._cleanup()
+        logger.debug("Hub ID in run function: %s", get_hub().thread_ident)
+        while True:
+            try:
+                self._consume_q()
+            except Exception as ex:
+                msg = "Tunnel caught exception - %s"
+                logger.error(msg, ex)
+                self.exception = ex
+            finally:
+                self._cleanup()

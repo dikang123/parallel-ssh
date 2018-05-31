@@ -16,6 +16,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 import logging
+from Queue import Queue
 from gevent import sleep
 
 from ..base_pssh import BaseParallelSSHClient
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 class ParallelSSHClient(BaseParallelSSHClient):
     """ssh2-python based parallel client."""
 
-    def __init__(self, hosts, user=None, password=None, port=None, pkey=None,
+    def __init__(self, hosts, user=None, password=None, port=22, pkey=None,
                  num_retries=DEFAULT_RETRIES, timeout=None, pool_size=10,
                  allow_agent=True, host_config=None, retry_delay=RETRY_DELAY,
                  proxy_host=None, proxy_port=22,
@@ -107,6 +108,8 @@ class ParallelSSHClient(BaseParallelSSHClient):
         self.proxy_password = proxy_password
         self.forward_ssh_agent = forward_ssh_agent
         self._tunnel = None
+        self._tunnel_in_q = None
+        self._tunnel_out_q = None
 
     def run_command(self, command, sudo=False, user=None, stop_on_errors=True,
                     use_pty=False, host_args=None, shell=None,
@@ -290,11 +293,13 @@ class ParallelSSHClient(BaseParallelSSHClient):
             return
         return channel.get_exit_status()
 
-    def _start_tunnel(self, host):
+    def _start_tunnel_thread(self):
         if self._tunnel is not None:
-            return self._tunnel
+            return
+        self._tunnel_out_q = Queue()
         tunnel = Tunnel(
-            self.proxy_host, host, self.port, user=self.proxy_user,
+            self.proxy_host, self._tunnel_in_q, self._tunnel_out_q,
+            user=self.proxy_user,
             password=self.proxy_password, port=self.proxy_port,
             pkey=self.proxy_pkey, num_retries=self.num_retries,
             timeout=self.timeout, retry_delay=self.retry_delay,
@@ -310,15 +315,22 @@ class ParallelSSHClient(BaseParallelSSHClient):
                 logger.error(msg, tunnel.exception)
                 raise ProxyError(msg, tunnel.exception)
         self._tunnel = tunnel
-        return tunnel
+
+    def _add_tunnel_data(self, host, _port):
+        logger.debug("Starting tunnel for %s:%s", host, _port)
+        in_q = self._tunnel_in_q if self._tunnel_in_q is not None \
+               else Queue()
+        in_q.put((host, _port))
+        self._tunnel_in_q = in_q
 
     def _make_ssh_client(self, host):
         if host not in self.host_clients or self.host_clients[host] is None:
-            if self.proxy_host is not None:
-                tunnel = self._start_tunnel(host)
             _user, _port, _password, _pkey = self._get_host_config_values(host)
+            if self.proxy_host is not None:
+                self._add_tunnel_data(host, _port)
+                self._start_tunnel_thread()
             proxy_host = None if self.proxy_host is None else '127.0.0.1'
-            _port = _port if self.proxy_host is None else tunnel.listen_port
+            _port = _port if self.proxy_host is None else self._tunnel_out_q.get()
             self.host_clients[host] = SSHClient(
                 host, user=_user, password=_password, port=_port, pkey=_pkey,
                 num_retries=self.num_retries, timeout=self.timeout,
