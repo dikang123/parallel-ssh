@@ -792,35 +792,6 @@ class ParallelSSHClientTest(unittest.TestCase):
         server2.stop()
         server3.stop()
 
-#     def test_ssh_proxy(self):
-#         """Test connecting to remote destination via SSH proxy
-#         client -> proxy -> destination
-#         Proxy SSH server accepts no commands and sends no responses, only
-#         proxies to destination. Destination accepts a command as usual."""
-#         del self.client
-#         self.client = None
-#         self.server.kill()
-#         server, _ = start_server_from_ip(self.host, port=self.listen_port)
-#         proxy_host = '127.0.0.2'
-#         proxy_server, proxy_server_port = start_server_from_ip(proxy_host)
-#         client = ParallelSSHClient([self.host], port=self.listen_port,
-#                                    pkey=self.user_key,
-#                                    proxy_host=proxy_host,
-#                                    proxy_port=proxy_server_port,
-#                                    )
-#         try:
-#             output = client.run_command(self.fake_cmd)
-#             stdout = list(output[self.host]['stdout'])
-#             expected_stdout = [self.fake_resp]
-#             self.assertEqual(expected_stdout, stdout,
-#                              msg="Got unexpected stdout - %s, expected %s" % 
-#                              (stdout,
-#                               expected_stdout,))
-#         finally:
-#             del client
-#             server.kill()
-#             proxy_server.kill()
-
 #     def test_ssh_proxy_target_host_failure(self):
 #         del self.client
 #         self.client = None
@@ -835,40 +806,6 @@ class ParallelSSHClientTest(unittest.TestCase):
 #         try:
 #             self.assertRaises(
 #                 ConnectionErrorException, client.run_command, self.fake_cmd)
-#         finally:
-#             del client
-#             proxy_server.kill()
-
-#     def test_ssh_proxy_auth(self):
-#         """Test connecting to remote destination via SSH proxy
-#         client -> proxy -> destination
-#         Proxy SSH server accepts no commands and sends no responses, only
-#         proxies to destination. Destination accepts a command as usual."""
-#         host2 = '127.0.0.2'
-#         proxy_server, proxy_server_port = start_server_from_ip(host2)
-#         proxy_user = 'proxy_user'
-#         proxy_password = 'fake'
-#         client = ParallelSSHClient([self.host], port=self.listen_port,
-#                                    pkey=self.user_key,
-#                                    proxy_host=host2,
-#                                    proxy_port=proxy_server_port,
-#                                    proxy_user=proxy_user,
-#                                    proxy_password='fake',
-#                                    proxy_pkey=self.user_key,
-#                                    num_retries=1,
-#                                    )
-#         expected_stdout = [self.fake_resp]
-#         try:
-#             output = client.run_command(self.fake_cmd)
-#             stdout = list(output[self.host]['stdout'])
-#             self.assertEqual(expected_stdout, stdout,
-#                             msg="Got unexpected stdout - %s, expected %s" % (
-#                                 stdout, expected_stdout,))
-#             self.assertEqual(client.host_clients[self.host].proxy_user,
-#                              proxy_user)
-#             self.assertEqual(client.host_clients[self.host].proxy_password,
-#                              proxy_password)
-#             self.assertTrue(client.host_clients[self.host].proxy_pkey)
 #         finally:
 #             del client
 #             proxy_server.kill()
@@ -1500,8 +1437,6 @@ class ParallelSSHClientTest(unittest.TestCase):
             shutil.rmtree(remote_test_path_abs)
             shutil.rmtree(local_copied_dir)
 
-    # This is a unit test, no output is checked, due to race conditions
-    # with running server in same thread.
     def test_tunnel(self):
         proxy_host = '127.0.0.9'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
@@ -1510,10 +1445,13 @@ class ParallelSSHClientTest(unittest.TestCase):
             [self.host], port=self.port, pkey=self.user_key,
             proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
             proxy_pkey=self.user_key,
-            timeout=2)
+            timeout=1)
         output = client.run_command(self.cmd, stop_on_errors=False)
-        client.join(output)
+        for host, host_out in output.items():
+            _stdout = list(host_out.stdout)
+            self.assertListEqual(_stdout, [self.resp])
         self.assertEqual(self.host, list(output.keys())[0])
+        client.join(output)
         del client
         server.stop()
 
@@ -1530,8 +1468,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         self.assertIsInstance(exc, ProxyError)
         self.assertIsInstance(exc.args[1], ConnectionErrorException)
 
-    def test_tunnel_accept_failure(self):
-        proxy_host = '127.0.0.9'
+    def test_single_tunnel_multi_hosts(self):
+        proxy_host = '127.0.0.29'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
         server.start_server()
         hosts = [self.host, self.host, self.host]
@@ -1539,9 +1477,12 @@ class ParallelSSHClientTest(unittest.TestCase):
             hosts, port=self.port, pkey=self.user_key,
             proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
             proxy_pkey=self.user_key,
-            timeout=2)
+            timeout=1)
         output = client.run_command(self.cmd, stop_on_errors=False)
-        client.join(output)
+        for host, host_out in output.items():
+            _stdout = list(host_out.stdout)
+            self.assertListEqual(_stdout, [self.resp])
+        # client.join(output)
         self.assertEqual(len(hosts), len(list(output.keys())))
         del client
         server.stop()

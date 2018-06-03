@@ -18,7 +18,8 @@ import os
 import socket
 import random
 import string
-from gevent.subprocess import Popen
+from multiprocessing import Process
+from subprocess import Popen
 from time import sleep
 from sys import version_info
 
@@ -34,9 +35,10 @@ SSHD_CONFIG_TMPL = os.path.abspath(os.path.sep.join(
 SSHD_CONFIG = os.path.abspath(os.path.sep.join([DIR_NAME, 'sshd_config']))
 
 
-class OpenSSHServer(object):
+class OpenSSHServer(Process):
 
     def __init__(self, listen_ip='127.0.0.1', port=2222):
+        Process.__init__(self)
         self.listen_ip = listen_ip
         self.port = port
         self.server_proc = None
@@ -45,6 +47,9 @@ class OpenSSHServer(object):
             for _ in range(8))
         self._fix_masks()
         self.make_config()
+
+    def run(self):
+        self.start_server()
 
     def _fix_masks(self):
         _mask = int('0600') if version_info <= (2,) else 0o600
