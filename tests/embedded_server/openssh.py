@@ -85,7 +85,13 @@ class OpenSSHServer(Process):
         if self.server_proc is not None and self.server_proc.returncode is None:
             self.server_proc.terminate()
             self.server_proc.wait()
+        try:
+            os.unlink(self.sshd_config)
+        except OSError:
+            pass
 
     def __del__(self):
-        self.stop()
-        os.unlink(self.sshd_config)
+        try:
+            os.unlink(self.sshd_config)
+        except OSError:
+            pass

@@ -22,7 +22,6 @@ from gevent import socket, spawn, joinall, get_hub, sleep
 from gevent.select import select
 
 from ssh2.error_codes import LIBSSH2_ERROR_EAGAIN
-from ssh2.utils import handle_error_codes
 
 from .single import SSHClient
 from ...constants import DEFAULT_RETRIES, RETRY_DELAY
@@ -33,11 +32,54 @@ logger = logging.getLogger(__name__)
 
 class Tunnel(Thread):
 
+    """SSH proxy implementation with direct TCP/IP tunnels.
+
+    Each tunnel object runs in its own thread and can open any number of
+    direct tunnels to remote host:port destinations on local ports over
+    the same SSH connection.
+
+    To use, append ``(host, port)`` tuples into ``Tunnel.in_q`` and read
+    listen port for tunnel connection from ``Tunnel.out_q``.
+
+    ``Tunnel.tunnel_open`` is a *thread* event that will be set once tunnel is
+    ready."""
+
     def __init__(self, host, in_q, out_q, user=None,
                  password=None, port=None, pkey=None,
                  num_retries=DEFAULT_RETRIES,
                  retry_delay=RETRY_DELAY,
                  allow_agent=True, timeout=None):
+        """
+        :param host: Remote SSH host to open tunnels with.
+        :type host: str
+        :param in_q: Deque for requesting new tunnel to given ``((host, port))``
+        :type in_q: :py:class:`collections.deque`
+        :param out_q: Deque for feeding back tunnel listening ports.
+        :type out_q: :py:class:`collections.deque`
+        :param user: (Optional) User to login as. Defaults to logged in user
+        :type user: str
+        :param password: (Optional) Password to use for login. Defaults to
+          no password
+        :type password: str
+        :param port: (Optional) Port number to use for SSH connection. Defaults
+          to ``None`` which uses SSH default (22)
+        :type port: int
+        :param pkey: Private key file path to use. Note that the public key file
+          pair *must* also exist in the same location with name ``<pkey>.pub``
+        :type pkey: str
+        :param num_retries: (Optional) Number of connection and authentication
+          attempts before the client gives up. Defaults to 3.
+        :type num_retries: int
+        :param retry_delay: Number of seconds to wait between retries. Defaults
+          to :py:class:`pssh.constants.RETRY_DELAY`
+        :type retry_delay: int
+        :param timeout: SSH session timeout setting in seconds. This controls
+          timeout setting of authenticated SSH sessions.
+        :type timeout: int
+        :param allow_agent: (Optional) set to False to disable connecting to
+          the system's SSH agent.
+        :type allow_agent: bool
+        """
         Thread.__init__(self)
         self.client = None
         self.session = None
@@ -55,7 +97,7 @@ class Tunnel(Thread):
         self.timeout = timeout
         self.exception = None
         self.tunnel_open = Event()
-        self.tunnels = []
+        self._tunnels = []
 
     def __del__(self):
         self.cleanup()
@@ -65,45 +107,71 @@ class Tunnel(Thread):
             if channel.eof():
                 logger.debug("Channel closed")
                 return
-            data = forward_sock.recv(1024)
+            try:
+                data = forward_sock.recv(1024)
+            except Exception:
+                logger.exception("Forward socket read error:")
+                sleep(1)
+                continue
             data_len = len(data)
             if data_len == 0:
                 continue
             data_written = 0
-            rc = channel.write(data)
             while data_written < data_len:
+                try:
+                    rc = channel.write(data)
+                except Exception:
+                    logger.exception("Channel write error:")
+                    sleep(1)
+                    continue
                 if rc == LIBSSH2_ERROR_EAGAIN:
                     select((), ((self.client.sock,)), (), timeout=0.001)
-                    rc = channel.write(data[data_written:])
-                    continue
-                elif rc < 0:
                     try:
-                        handle_error_codes(rc)
-                    except Exception as ex:
-                        logger.error("Channel write error %s - %s", rc, ex)
-                    return
+                        rc = channel.write(data[data_written:])
+                    except Exception:
+                        logger.exception("Channel write error:")
+                        sleep(1)
+                    continue
                 data_written += rc
-                rc = channel.write(data[data_written:])
+                try:
+                    rc = channel.write(data[data_written:])
+                except Exception:
+                    logger.exception("Channel write error:")
+                    sleep(1)
 
     def _read_channel(self, forward_sock, channel):
         while True:
             if channel.eof():
                 logger.debug("Channel closed")
                 return
-            size, data = channel.read()
+            try:
+                size, data = channel.read()
+            except Exception:
+                logger.exception("Error reading from channel:")
+                sleep(1)
+                continue
             while size == LIBSSH2_ERROR_EAGAIN or size > 0:
                 if size == LIBSSH2_ERROR_EAGAIN:
                     select((self.client.sock,), (), (), timeout=0.001)
-                    size, data = channel.read()
-                elif size < 0:
                     try:
-                        handle_error_codes(size)
+                        size, data = channel.read()
                     except Exception as ex:
                         logger.error("Error reading from channel - %s", ex)
-                    return
+                        sleep(1)
+                        continue
                 while size > 0:
-                    forward_sock.sendall(data)
-                    size, data = channel.read()
+                    try:
+                        forward_sock.sendall(data)
+                    except Exception as ex:
+                        logger.error(
+                            "Error sending data to forward socket - %s", ex)
+                        sleep(.1)
+                        continue
+                    try:
+                        size, data = channel.read()
+                    except Exception as ex:
+                        logger.error("Error reading from channel - %s", ex)
+                        sleep(.1)
 
     def _init_tunnel_sock(self):
         tunnel_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -132,13 +200,9 @@ class Tunnel(Thread):
             try:
                 _sock.close()
             except Exception as ex:
-                logger.error(ex)
+                logger.error("Exception while closing sockets - %s", ex)
         if self.session is not None:
             self.client.disconnect()
-            del self.session
-            del self.client
-            self.client = None
-            self.session = None
 
     def _consume_q(self):
         while True:
@@ -149,7 +213,7 @@ class Tunnel(Thread):
                 continue
             logger.debug("Got request for tunnel to %s:%s", host, port)
             tunnel = spawn(self._start_tunnel, host, port)
-            self.tunnels.append(tunnel)
+            self._tunnels.append(tunnel)
 
     def _start_tunnel(self, fw_host, fw_port):
         try:
@@ -201,6 +265,8 @@ class Tunnel(Thread):
             forward_sock.close()
 
     def run(self):
+        """Thread run target. Starts tunnel client and waits for incoming
+        tunnel connection requests from ``Tunnel.in_q``."""
         try:
             self._init_tunnel_client()
         except Exception as ex:
@@ -211,8 +277,9 @@ class Tunnel(Thread):
         consume_let = spawn(self._consume_q)
         try:
             consume_let.get()
-        except Exception:
-            logger.exception("Tunnel thread caught exception and will exit:")
+        except Exception as ex:
+            logger.error("Tunnel thread caught exception and will exit:",
+                         exc_info=1)
             self.exception = ex
         finally:
             self.cleanup()
