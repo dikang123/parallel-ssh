@@ -168,6 +168,7 @@ class SSHClient(object):
 
     def _connect(self, host, port, retries=1):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
         logger.debug("Connecting to %s:%s", host, port)
         try:
             self.sock.connect((host, port))

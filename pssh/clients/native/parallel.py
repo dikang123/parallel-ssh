@@ -113,7 +113,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
 
     def run_command(self, command, sudo=False, user=None, stop_on_errors=True,
                     use_pty=False, host_args=None, shell=None,
-                    encoding='utf-8', timeout=None):
+                    encoding='utf-8', timeout=None, greenlet_timeout=None):
         """Run command on all hosts in parallel, honoring self.pool_size,
         and return output dictionary.
 
@@ -163,9 +163,21 @@ class ParallelSSHClient(BaseParallelSSHClient):
         :type encoding: str
         :param timeout: (Optional) Timeout in seconds for reading from stdout
           or stderr. Defaults to no timeout. Reading from stdout/stderr will
-          timeout after this many seconds if remote output is not ready.
+          raise :py:class:`pssh.exceptions.Timeout`
+          after ``timeout`` number seconds if remote output is not ready.
         :type timeout: int
-
+        :param greenlet_timeout: (Optional) Greenlet timeout setting.
+          Defaults to no timeout. If set, this function will raise
+          :py:class:`gevent.Timeout` after ``greenlet_timeout`` seconds
+          if no result is available from greenlets.
+          In some cases, such as when using proxy hosts, connection timeout
+          is controlled by proxy server and getting result from greenlets may
+          hang indefinitely if remote server is unavailable. Use this setting
+          to avoid blocking in such circumstances.
+          Note that ``gevent.Timeout`` is a special class that inherits from
+          ``BaseException`` and thus **can not be caught** by
+          ``stop_on_errors=False``.
+        :type greenlet_timeout: float
         :rtype: Dictionary with host as key and
           :py:class:`pssh.output.HostOutput` as value as per
           :py:func:`pssh.pssh_client.ParallelSSHClient.get_output`
@@ -184,11 +196,14 @@ class ParallelSSHClient(BaseParallelSSHClient):
           dict for cmd string format
         :raises: :py:class:`pssh.exceptions.ProxyError` on errors connecting
           to proxy if a proxy host has been set.
+        :raises: :py:class:`gevent.Timeout` on greenlet timeout. Gevent timeout
+          can not be caught by ``stop_on_errors=False``.
         """
         return BaseParallelSSHClient.run_command(
             self, command, stop_on_errors=stop_on_errors, host_args=host_args,
             user=user, shell=shell, sudo=sudo,
-            encoding=encoding, use_pty=use_pty, timeout=timeout)
+            encoding=encoding, use_pty=use_pty, timeout=timeout,
+            greenlet_timeout=greenlet_timeout)
 
     def _run_command(self, host, command, sudo=False, user=None,
                      shell=None, use_pty=False,

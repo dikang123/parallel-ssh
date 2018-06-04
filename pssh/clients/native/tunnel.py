@@ -146,8 +146,8 @@ class Tunnel(Thread):
                 return
             try:
                 size, data = channel.read()
-            except Exception:
-                logger.exception("Error reading from channel:")
+            except Exception as ex:
+                logger.error("Error reading from channel - %s", ex)
                 sleep(1)
                 continue
             while size == LIBSSH2_ERROR_EAGAIN or size > 0:
@@ -175,6 +175,7 @@ class Tunnel(Thread):
 
     def _init_tunnel_sock(self):
         tunnel_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tunnel_socket.settimeout(self.timeout)
         try:
             tunnel_socket.bind(('127.0.0.1', 0))
             tunnel_socket.listen(0)
@@ -233,6 +234,7 @@ class Tunnel(Thread):
             self.exception = ex
             listen_socket.close()
             return
+        forward_sock.settimeout(self.timeout)
         logger.debug("Client connected, forwarding %s:%s on"
                      " remote host to %s",
                      fw_host, fw_port, forward_addr)

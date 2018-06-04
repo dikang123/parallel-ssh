@@ -1435,69 +1435,6 @@ class ParallelSSHClientTest(unittest.TestCase):
         finally:
             shutil.rmtree(remote_test_path_abs)
             shutil.rmtree(local_copied_dir)
-
-    def test_tunnel(self):
-        remote_host = '127.0.0.8'
-        proxy_host = '127.0.0.9'
-        server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
-        remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
-        try:
-            client = ParallelSSHClient(
-                [remote_host], port=self.port, pkey=self.user_key,
-                proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
-                proxy_pkey=self.user_key,
-                timeout=1)
-            output = client.run_command(self.cmd, stop_on_errors=False)
-            for host, host_out in output.items():
-                _stdout = list(host_out.stdout)
-                self.assertListEqual(_stdout, [self.resp])
-            self.assertEqual(remote_host, list(output.keys())[0])
-            client.join(output)
-            del client
-        finally:
-            server.stop()
-            remote_server.stop()
-
-    def test_tunnel_init_failure(self):
-        proxy_host = '127.0.0.20'
-        client = ParallelSSHClient(
-            [self.host], port=self.port, pkey=self.user_key,
-            proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
-            proxy_pkey=self.user_key,
-            timeout=2)
-        output = client.run_command(self.cmd, stop_on_errors=False)
-        client.join(output)
-        exc = output[self.host].exception
-        self.assertIsInstance(exc, ProxyError)
-        self.assertIsInstance(exc.args[1], ConnectionErrorException)
-
-    def test_single_tunnel_multi_hosts(self):
-        remote_host = '127.0.0.8'
-        proxy_host = '127.0.0.29'
-        server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
-        remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
-        hosts = [remote_host, remote_host, remote_host]
-        try:
-            client = ParallelSSHClient(
-                hosts, port=self.port, pkey=self.user_key,
-                proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
-                proxy_pkey=self.user_key,
-                timeout=1)
-            output = client.run_command(self.cmd, stop_on_errors=False)
-            for host, host_out in output.items():
-                _stdout = list(host_out.stdout)
-                self.assertListEqual(_stdout, [self.resp])
-            client.join(output)
-            self.assertEqual(len(hosts), len(list(output.keys())))
-            del client
-        finally:
-            server.stop()
-            remote_server.stop()
-
 #     def test_proxy_remote_host_failure_timeout(self):
 #         """Test that timeout setting is passed on to proxy to be used for the
 #         proxy->remote host connection timeout
