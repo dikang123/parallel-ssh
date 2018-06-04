@@ -192,7 +192,8 @@ class Tunnel(Thread):
                                 num_retries=self.num_retries,
                                 retry_delay=self.retry_delay,
                                 allow_agent=self.allow_agent,
-                                timeout=self.timeout)
+                                timeout=self.timeout,
+                                _auth_thread_pool=False)
         self.session = self.client.session
         self.tunnel_open.set()
 

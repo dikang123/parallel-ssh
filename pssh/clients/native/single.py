@@ -64,7 +64,8 @@ class SSHClient(object):
                  retry_delay=RETRY_DELAY,
                  allow_agent=True, timeout=None,
                  forward_ssh_agent=True,
-                 proxy_host=None):
+                 proxy_host=None,
+                 _auth_thread_pool=True):
         """:param host: Host name or IP to connect to.
         :type host: str
         :param user: User to connect as. Defaults to logged in user.
@@ -116,7 +117,10 @@ class SSHClient(object):
         self.session = None
         self._host = proxy_host if proxy_host else host
         self._connect(self._host, self.port)
-        THREAD_POOL.apply(self._init)
+        if _auth_thread_pool:
+            THREAD_POOL.apply(self._init)
+        else:
+            self._init()
 
     def disconnect(self):
         """Disconnect session, close socket if needed."""

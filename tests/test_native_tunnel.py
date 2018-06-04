@@ -64,7 +64,8 @@ class TunnelTest(unittest.TestCase):
     def test_tunnel(self):
         proxy_host = '127.0.0.9'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
+        server.start()
+        server.wait_for_port()
         in_q, out_q = deque(), deque()
         try:
             tunnel = Tunnel(proxy_host, in_q, out_q, port=self.port,
@@ -82,15 +83,16 @@ class TunnelTest(unittest.TestCase):
             for _sock in tunnel._sockets:
                 self.assertTrue(_sock.closed)
         finally:
-            server.stop()
+            server.terminate()
 
     def test_tunnel_channel_failure(self):
         proxy_host = '127.0.0.9'
         remote_host = '127.0.0.8'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
         remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
+        for _server in (server, remote_server):
+            _server.start()
+            _server.wait_for_port()
         in_q, out_q = deque(), deque()
         try:
             tunnel = Tunnel(proxy_host, in_q, out_q, port=self.port,
@@ -119,16 +121,17 @@ class TunnelTest(unittest.TestCase):
             proxy_client.disconnect()
             self.assertTrue(proxy_client.sock.closed)
         finally:
-            remote_server.stop()
-            server.stop()
+            for _server in (remote_server, server):
+                _server.terminate()
 
     def test_tunnel_server_failure(self):
         proxy_host = '127.0.0.9'
         remote_host = '127.0.0.8'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
         remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
+        for _server in (server, remote_server):
+            _server.start()
+            _server.wait_for_port()
         in_q, out_q = deque(), deque()
         try:
             tunnel = Tunnel(proxy_host, in_q, out_q, port=self.port,
@@ -159,22 +162,22 @@ class TunnelTest(unittest.TestCase):
             proxy_client.disconnect()
             self.assertTrue(proxy_client.sock.closed)
         finally:
-            server.stop()
-            remote_server.stop()
+            for _server in (remote_server, server):
+                _server.terminate()
 
     def test_tunnel(self):
         remote_host = '127.0.0.8'
         proxy_host = '127.0.0.9'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
         remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
+        for _server in (server, remote_server):
+            _server.start()
+            _server.wait_for_port()
         try:
             client = ParallelSSHClient(
                 [remote_host], port=self.port, pkey=self.user_key,
                 proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
-                proxy_pkey=self.user_key,
-                timeout=1)
+                proxy_pkey=self.user_key)
             output = client.run_command(self.cmd)
             client.join(output)
             for host, host_out in output.items():
@@ -183,16 +186,15 @@ class TunnelTest(unittest.TestCase):
             self.assertEqual(remote_host, list(output.keys())[0])
             del client
         finally:
-            server.stop()
-            remote_server.stop()
+            for _server in (remote_server, server):
+                _server.terminate()
 
     def test_tunnel_init_failure(self):
         proxy_host = '127.0.0.20'
         client = ParallelSSHClient(
             [self.host], port=self.port, pkey=self.user_key,
             proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
-            proxy_pkey=self.user_key,
-            timeout=2)
+            proxy_pkey=self.user_key)
         output = client.run_command(self.cmd, stop_on_errors=False)
         client.join(output)
         exc = output[self.host].exception
@@ -203,9 +205,10 @@ class TunnelTest(unittest.TestCase):
         remote_host = '127.0.0.8'
         proxy_host = '127.0.0.9'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
         remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
+        for _server in (server, remote_server):
+            _server.start()
+            _server.wait_for_port()
         try:
             client = ParallelSSHClient(
                 [remote_host], port=self.port, pkey=self.user_key,
@@ -222,16 +225,16 @@ class TunnelTest(unittest.TestCase):
                               greenlet_timeout=1, stop_on_errors=False)
             del client
         finally:
-            server.stop()
-            remote_server.stop()
+            for _server in (remote_server, server):
+                _server.terminate()
 
     def test_single_tunnel_multi_hosts(self):
         remote_host = '127.0.0.8'
         proxy_host = '127.0.0.29'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        server.start_server()
+        server.start()
         remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
-        remote_server.start_server()
+        remote_server.start()
         hosts = [remote_host, remote_host, remote_host]
         try:
             client = ParallelSSHClient(
@@ -247,5 +250,5 @@ class TunnelTest(unittest.TestCase):
             self.assertEqual(len(hosts), len(list(output.keys())))
             del client
         finally:
-            server.stop()
-            remote_server.stop()
+            for _server in (remote_server, server):
+                _server.terminate()

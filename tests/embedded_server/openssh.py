@@ -72,9 +72,9 @@ class OpenSSHServer(Process):
                '-h', SERVER_KEY, '-f', self.sshd_config]
         server = Popen(cmd)
         self.server_proc = server
-        self._wait_for_port()
+        self.wait_for_port()
 
-    def _wait_for_port(self):
+    def wait_for_port(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         while sock.connect_ex((self.listen_ip, self.port)) != 0:
             sleep(.1)

@@ -146,7 +146,8 @@ class ParallelSSHClientTest(unittest.TestCase):
     def test_get_last_output(self):
         host = '127.0.0.9'
         server = OpenSSHServer(listen_ip=host, port=self.port)
-        server.start_server()
+        server.start()
+        server.wait_for_port()
         hosts = [self.host, host]
         client = ParallelSSHClient(hosts, port=self.port, pkey=self.user_key)
         self.assertTrue(client.cmds is None)
@@ -383,7 +384,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         server3 = OpenSSHServer(host3)
         servers = [server2, server3]
         for server in servers:
-            server.start_server()
+            server.start()
+            server.wait_for_port()
         time.sleep(1)
         hosts = [self.host, host2, host3]
 
@@ -656,7 +658,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         server3 = OpenSSHServer(host3)
         servers = [server2, server3]
         for server in servers:
-            server.start_server()
+            server.start()
+            server.wait_for_port()
         time.sleep(1)
         hosts = [self.host, host2, host3]
 
@@ -735,7 +738,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         # Make a second server on the same port as the first one
         host2 = '127.0.0.2'
         server2 = OpenSSHServer(listen_ip=host2)
-        server2.start_server()
+        server2.start()
+        server2.wait_for_port()
         hosts = [self.host, host2]
         client = ParallelSSHClient(hosts,
                                    port=self.port,
@@ -759,8 +763,9 @@ class ParallelSSHClientTest(unittest.TestCase):
         host2, host3 = '127.0.0.2', '127.0.0.3'
         server2 = OpenSSHServer(listen_ip=host2) 
         server3 = OpenSSHServer(listen_ip=host3)
-        server2.start_server()
-        server3.start_server()
+        for _server in (server2, server3):
+            _server.start()
+            _server.wait_for_port()
         hosts = [self.host, '127.0.0.2']
         client = ParallelSSHClient(iter(hosts),
                                    port=self.port,
@@ -790,48 +795,6 @@ class ParallelSSHClientTest(unittest.TestCase):
                         msg="Did not get output for new host %s" % (hosts[1],))
         server2.stop()
         server3.stop()
-
-#     def test_ssh_proxy_target_host_failure(self):
-#         del self.client
-#         self.client = None
-#         self.server.kill()
-#         proxy_host = '127.0.0.2'
-#         proxy_server, proxy_server_port = start_server_from_ip(proxy_host)
-#         client = ParallelSSHClient([self.host], port=self.listen_port,
-#                                    pkey=self.user_key,
-#                                    proxy_host=proxy_host,
-#                                    proxy_port=proxy_server_port,
-#                                    )
-#         try:
-#             self.assertRaises(
-#                 ConnectionErrorException, client.run_command, self.fake_cmd)
-#         finally:
-#             del client
-#             proxy_server.kill()
-
-#     def test_ssh_proxy_auth_fail(self):
-#         """Test failures while connecting via proxy"""
-#         proxy_host = '127.0.0.2'
-#         server, listen_port = start_server_from_ip(self.host, fail_auth=True)
-#         proxy_server, proxy_server_port = start_server_from_ip(proxy_host)
-#         proxy_user = 'proxy_user'
-#         proxy_password = 'fake'
-#         client = ParallelSSHClient([self.host], port=listen_port,
-#                                    pkey=self.user_key,
-#                                    proxy_host='127.0.0.2',
-#                                    proxy_port=proxy_server_port,
-#                                    proxy_user=proxy_user,
-#                                    proxy_password='fake',
-#                                    proxy_pkey=self.user_key,
-#                                    num_retries=1,
-#                                    )
-#         try:
-#             self.assertRaises(
-#                 AuthenticationException, client.run_command, self.fake_cmd)
-#         finally:
-#             del client
-#             server.kill()
-#             proxy_server.kill()
 
     def test_bash_variable_substitution(self):
         """Test bash variables work correctly"""
@@ -882,7 +845,6 @@ class ParallelSSHClientTest(unittest.TestCase):
 
     def test_authentication_exception(self):
         """Test that we get authentication exception in output with correct arguments"""
-        # server, port = start_server_from_ip(self.host, fail_auth=True)
         hosts = [self.host]
         client = ParallelSSHClient(hosts, port=self.port,
                                    pkey='A REALLY FAKE KEY',
@@ -959,7 +921,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         fake_key = 'FAKE KEY'
         for host, port in hosts:
             server = OpenSSHServer(listen_ip=host, port=port)
-            server.start_server()
+            server.start()
+            server.wait_for_port()
             host_config[host] = {}
             host_config[host]['port'] = port
             host_config[host]['user'] = self.user
@@ -1028,7 +991,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         server3 = OpenSSHServer(host3)
         servers = [server2, server3]
         for server in servers:
-            server.start_server()
+            server.start()
+            server.wait_for_port()
         time.sleep(1)
         hosts = [self.host, host2, host3]
         host_args = ('arg1', 'arg2', 'arg3')
@@ -1065,7 +1029,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         server3 = OpenSSHServer(host3)
         servers = [server2, server3]
         for server in servers:
-            server.start_server()
+            server.start()
+            server.wait_for_port()
         hosts = [self.host, host2, host3]
         hosts_gen = (h for h in hosts)
         host_args = [dict(zip(('host_arg1', 'host_arg2',),
@@ -1435,33 +1400,3 @@ class ParallelSSHClientTest(unittest.TestCase):
         finally:
             shutil.rmtree(remote_test_path_abs)
             shutil.rmtree(local_copied_dir)
-#     def test_proxy_remote_host_failure_timeout(self):
-#         """Test that timeout setting is passed on to proxy to be used for the
-#         proxy->remote host connection timeout
-#         """
-#         self.server.kill()
-#         server_timeout=0.2
-#         client_timeout=server_timeout-0.1
-#         server, listen_port = start_server_from_ip(self.host,
-#                                                    timeout=server_timeout)
-#         proxy_host = '127.0.0.2'
-#         proxy_server, proxy_server_port = start_server_from_ip(proxy_host)
-#         proxy_user = 'proxy_user'
-#         proxy_password = 'fake'
-#         client = ParallelSSHClient([self.host], port=listen_port,
-#                                    pkey=self.user_key,
-#                                    proxy_host='127.0.0.2',
-#                                    proxy_port=proxy_server_port,
-#                                    proxy_user=proxy_user,
-#                                    proxy_password='fake',
-#                                    proxy_pkey=self.user_key,
-#                                    num_retries=1,
-#                                    timeout=client_timeout,
-#                                    )
-#         try:
-#             self.assertRaises(
-#                 ConnectionErrorException, client.run_command, self.fake_cmd)
-#         finally:
-#             del client
-#             server.kill()
-#             proxy_server.kill()

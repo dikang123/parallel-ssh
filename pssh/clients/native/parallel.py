@@ -330,6 +330,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
                 raise ProxyError(msg, self._tunnel.exception)
 
     def _make_ssh_client(self, host):
+        auth_thread_pool = True
         if self.proxy_host is not None and self._tunnel is None:
             self._start_tunnel_thread()
         if host not in self.host_clients or self.host_clients[host] is None:
@@ -338,6 +339,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
                 self._tunnel_in_q.append((host, _port))
             proxy_host = None if self.proxy_host is None else '127.0.0.1'
             if self.proxy_host is not None:
+                auth_thread_pool = False
                 while True:
                     try:
                         _port = self._tunnel_out_q.pop()
@@ -350,7 +352,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
                 host, user=_user, password=_password, port=_port, pkey=_pkey,
                 num_retries=self.num_retries, timeout=self.timeout,
                 allow_agent=self.allow_agent, retry_delay=self.retry_delay,
-                proxy_host=proxy_host)
+                proxy_host=proxy_host, _auth_thread_pool=auth_thread_pool)
 
     def copy_file(self, local_file, remote_file, recurse=False, copy_args=None):
         """Copy local file to remote file in parallel
