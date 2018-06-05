@@ -18,6 +18,7 @@
 import logging
 from collections import deque
 from gevent import sleep
+from gevent.lock import RLock
 
 from ..base_pssh import BaseParallelSSHClient
 from ...constants import DEFAULT_RETRIES, RETRY_DELAY
@@ -110,6 +111,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
         self._tunnel = None
         self._tunnel_in_q = None
         self._tunnel_out_q = None
+        self._tunnel_lock = None
 
     def run_command(self, command, sudo=False, user=None, stop_on_errors=True,
                     use_pty=False, host_args=None, shell=None,
@@ -309,6 +311,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
         return channel.get_exit_status()
 
     def _start_tunnel_thread(self):
+        self._tunnel_lock = RLock()
         self._tunnel_in_q = deque()
         self._tunnel_out_q = deque()
         self._tunnel = Tunnel(
@@ -335,11 +338,11 @@ class ParallelSSHClient(BaseParallelSSHClient):
             self._start_tunnel_thread()
         if host not in self.host_clients or self.host_clients[host] is None:
             _user, _port, _password, _pkey = self._get_host_config_values(host)
-            if self.proxy_host is not None:
-                self._tunnel_in_q.append((host, _port))
             proxy_host = None if self.proxy_host is None else '127.0.0.1'
-            if self.proxy_host is not None:
+            if proxy_host is not None:
                 auth_thread_pool = False
+                with self._tunnel_lock:
+                    self._tunnel_in_q.append((host, _port))
                 while True:
                     try:
                         _port = self._tunnel_out_q.pop()
