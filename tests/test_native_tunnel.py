@@ -241,7 +241,18 @@ class TunnelTest(unittest.TestCase):
                 hosts, port=self.port, pkey=self.user_key,
                 proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
                 proxy_pkey=self.user_key,
-                timeout=1)
+                timeout=.01)
+            output = client.run_command(self.cmd, stop_on_errors=False)
+            client.join(output)
+            # import ipdb; ipdb.set_trace()
+            for host, host_out in output.items():
+                self.assertIsInstance(output[host].exception, Timeout)
+            del client
+            sleep(1)
+            client = ParallelSSHClient(
+                hosts, port=self.port, pkey=self.user_key,
+                proxy_host=proxy_host, proxy_port=self.port, num_retries=1,
+                proxy_pkey=self.user_key)
             output = client.run_command(self.cmd, stop_on_errors=False)
             client.join(output)
             for host, host_out in output.items():

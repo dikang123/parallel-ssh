@@ -38,7 +38,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
                  allow_agent=True, host_config=None, retry_delay=RETRY_DELAY,
                  proxy_host=None, proxy_port=22,
                  proxy_user=None, proxy_password=None, proxy_pkey=None,
-                 forward_ssh_agent=True):
+                 forward_ssh_agent=True, tunnel_timeout=None):
         """
         :param hosts: Hosts to connect to
         :type hosts: list(str)
@@ -96,6 +96,9 @@ class ParallelSSHClient(BaseParallelSSHClient):
           equivalent to `ssh -A` from the `ssh` command line utility.
           Defaults to True if not set.
         :type forward_ssh_agent: bool
+        :param tunnel_timeout: (Optional) Timeout setting for proxy tunnel
+          connections.
+        :type tunnel_timeout: float
         """
         BaseParallelSSHClient.__init__(
             self, hosts, user=user, password=password, port=port, pkey=pkey,
@@ -112,6 +115,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
         self._tunnel_in_q = None
         self._tunnel_out_q = None
         self._tunnel_lock = None
+        self._tunnel_timeout = tunnel_timeout
 
     def run_command(self, command, sudo=False, user=None, stop_on_errors=True,
                     use_pty=False, host_args=None, shell=None,
@@ -218,7 +222,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
                 use_pty=use_pty, encoding=encoding, timeout=timeout)
         except Exception as ex:
             ex.host = host
-            logger.error("Failed to run on host %s", host)
+            logger.error("Failed to run on host %s - %s", host, ex)
             raise ex
 
     def join(self, output, consume_output=False, timeout=None):
@@ -319,7 +323,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
             user=self.proxy_user,
             password=self.proxy_password, port=self.proxy_port,
             pkey=self.proxy_pkey, num_retries=self.num_retries,
-            timeout=self.timeout, retry_delay=self.retry_delay,
+            timeout=self._tunnel_timeout, retry_delay=self.retry_delay,
             allow_agent=self.allow_agent)
         self._tunnel.daemon = True
         self._tunnel.start()
@@ -336,19 +340,28 @@ class ParallelSSHClient(BaseParallelSSHClient):
         auth_thread_pool = True
         if self.proxy_host is not None and self._tunnel is None:
             self._start_tunnel_thread()
+        logger.debug("Make client request for host %s, host in clients: %s",
+                     host, host in self.host_clients)
         if host not in self.host_clients or self.host_clients[host] is None:
+            # TODO - add host clients gevent lock
             _user, _port, _password, _pkey = self._get_host_config_values(host)
             proxy_host = None if self.proxy_host is None else '127.0.0.1'
             if proxy_host is not None:
                 auth_thread_pool = False
+                _wait = 0.0
+                max_wait = self.timeout if self.timeout is not None else 60
                 with self._tunnel_lock:
                     self._tunnel_in_q.append((host, _port))
                 while True:
+                    if _wait >= max_wait:
+                        raise Timeout("Timed out waiting on tunnel to "
+                                      "open listening port")
                     try:
                         _port = self._tunnel_out_q.pop()
                     except IndexError:
                         logger.debug("Waiting on tunnel to open listening port")
                         sleep(.5)
+                        _wait += .5
                     else:
                         break
             self.host_clients[host] = SSHClient(

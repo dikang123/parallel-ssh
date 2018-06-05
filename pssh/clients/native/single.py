@@ -28,7 +28,8 @@ from socket import gaierror as sock_gaierror, error as sock_error
 from gevent import sleep, socket, get_hub
 from gevent.hub import Hub
 from ssh2.error_codes import LIBSSH2_ERROR_EAGAIN
-from ssh2.exceptions import SFTPHandleError, SFTPProtocolError
+from ssh2.exceptions import SFTPHandleError, SFTPProtocolError, \
+    Timeout as SSH2Timeout
 from ssh2.session import Session
 from ssh2.sftp import LIBSSH2_FXF_READ, LIBSSH2_FXF_CREAT, LIBSSH2_FXF_WRITE, \
     LIBSSH2_FXF_TRUNC, LIBSSH2_SFTP_S_IRUSR, LIBSSH2_SFTP_S_IRGRP, \
@@ -160,7 +161,10 @@ class SSHClient(object):
             while retries < self.num_retries:
                 return self._connect_init_retry(retries)
             msg = "Error connecting to host %s:%s - %s"
-            raise SessionError(msg, self.host, self.port, ex)
+            logger.error(msg)
+            if isinstance(ex, SSH2Timeout):
+                raise Timeout(msg, self.host, self.port, ex)
+            raise # SessionError(msg, self.host, self.port, ex)
         try:
             self.auth()
         except Exception as ex:
