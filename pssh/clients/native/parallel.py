@@ -48,7 +48,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
           no password
         :type password: str
         :param port: (Optional) Port number to use for SSH connection. Defaults
-          to ``None`` which uses SSH default (22)
+          to 22.
         :type port: int
         :param pkey: Private key file path to use. Note that the public key file
           pair *must* also exist in the same location with name ``<pkey>.pub``
@@ -59,9 +59,10 @@ class ParallelSSHClient(BaseParallelSSHClient):
         :param retry_delay: Number of seconds to wait between retries. Defaults
           to :py:class:`pssh.constants.RETRY_DELAY`
         :type retry_delay: int
-        :param timeout: SSH session timeout setting in seconds. This controls
-          timeout setting of authenticated SSH sessions.
-        :type timeout: int
+        :param timeout: (Optional) SSH session timeout setting in seconds.
+          This controls timeout setting of socket operations used for SSH
+          sessions. Defaults to OS default - usually 60 seconds.
+        :type timeout: float
         :param pool_size: (Optional) Greenlet pool size. Controls
           concurrency, on how many hosts to execute tasks in parallel.
           Defaults to 10. Overhead in event

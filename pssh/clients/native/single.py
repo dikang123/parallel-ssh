@@ -161,7 +161,7 @@ class SSHClient(object):
             while retries < self.num_retries:
                 return self._connect_init_retry(retries)
             msg = "Error connecting to host %s:%s - %s"
-            logger.error(msg)
+            logger.error(msg, self.host, self.port, ex)
             if isinstance(ex, SSH2Timeout):
                 raise Timeout(msg, self.host, self.port, ex)
             raise
