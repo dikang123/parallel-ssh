@@ -272,8 +272,8 @@ class ParallelSSHClientTest(unittest.TestCase):
                                    timeout=client_timeout,
                                    num_retries=1)
         output = client.run_command('sleep 1', stop_on_errors=False)
-        self.assertTrue(isinstance(output[self.host].exception,
-                                   SessionError))
+        self.assertIsInstance(output[self.host].exception,
+                              Timeout)
 
 #     def test_pssh_client_run_command_password(self):
 #         """Test password authentication. Embedded server accepts any password

@@ -164,7 +164,7 @@ class SSHClient(object):
             logger.error(msg)
             if isinstance(ex, SSH2Timeout):
                 raise Timeout(msg, self.host, self.port, ex)
-            raise # SessionError(msg, self.host, self.port, ex)
+            raise
         try:
             self.auth()
         except Exception as ex:
