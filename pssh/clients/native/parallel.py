@@ -117,6 +117,7 @@ class ParallelSSHClient(BaseParallelSSHClient):
         self._tunnel_out_q = None
         self._tunnel_lock = None
         self._tunnel_timeout = tunnel_timeout
+        self._clients_lock = RLock()
 
     def run_command(self, command, sudo=False, user=None, stop_on_errors=True,
                     use_pty=False, host_args=None, shell=None,
@@ -205,6 +206,9 @@ class ParallelSSHClient(BaseParallelSSHClient):
           to proxy if a proxy host has been set.
         :raises: :py:class:`gevent.Timeout` on greenlet timeout. Gevent timeout
           can not be caught by ``stop_on_errors=False``.
+        :raises: Exceptions from :py:mod:`ssh2.exceptions` for all other
+          specific errors such as
+          :py:class:`ssh2.exceptions.SocketDisconnectError` et al.
         """
         return BaseParallelSSHClient.run_command(
             self, command, stop_on_errors=stop_on_errors, host_args=host_args,
@@ -343,33 +347,33 @@ class ParallelSSHClient(BaseParallelSSHClient):
             self._start_tunnel_thread()
         logger.debug("Make client request for host %s, host in clients: %s",
                      host, host in self.host_clients)
-        if host not in self.host_clients or self.host_clients[host] is None:
-            # TODO - add host clients gevent lock
-            _user, _port, _password, _pkey = self._get_host_config_values(host)
-            proxy_host = None if self.proxy_host is None else '127.0.0.1'
-            if proxy_host is not None:
-                auth_thread_pool = False
-                _wait = 0.0
-                max_wait = self.timeout if self.timeout is not None else 60
-                with self._tunnel_lock:
-                    self._tunnel_in_q.append((host, _port))
-                while True:
-                    if _wait >= max_wait:
-                        raise Timeout("Timed out waiting on tunnel to "
-                                      "open listening port")
-                    try:
-                        _port = self._tunnel_out_q.pop()
-                    except IndexError:
-                        logger.debug("Waiting on tunnel to open listening port")
-                        sleep(.5)
-                        _wait += .5
-                    else:
-                        break
-            self.host_clients[host] = SSHClient(
-                host, user=_user, password=_password, port=_port, pkey=_pkey,
-                num_retries=self.num_retries, timeout=self.timeout,
-                allow_agent=self.allow_agent, retry_delay=self.retry_delay,
-                proxy_host=proxy_host, _auth_thread_pool=auth_thread_pool)
+        with self._clients_lock:
+            if host not in self.host_clients or self.host_clients[host] is None:
+                _user, _port, _password, _pkey = self._get_host_config_values(host)
+                proxy_host = None if self.proxy_host is None else '127.0.0.1'
+                if proxy_host is not None:
+                    auth_thread_pool = False
+                    _wait = 0.0
+                    max_wait = self.timeout if self.timeout is not None else 60
+                    with self._tunnel_lock:
+                        self._tunnel_in_q.append((host, _port))
+                    while True:
+                        if _wait >= max_wait:
+                            raise Timeout("Timed out waiting on tunnel to "
+                                          "open listening port")
+                        try:
+                            _port = self._tunnel_out_q.pop()
+                        except IndexError:
+                            logger.debug("Waiting on tunnel to open listening port")
+                            sleep(.5)
+                            _wait += .5
+                        else:
+                            break
+                self.host_clients[host] = SSHClient(
+                    host, user=_user, password=_password, port=_port, pkey=_pkey,
+                    num_retries=self.num_retries, timeout=self.timeout,
+                    allow_agent=self.allow_agent, retry_delay=self.retry_delay,
+                    proxy_host=proxy_host, _auth_thread_pool=auth_thread_pool)
 
     def copy_file(self, local_file, remote_file, recurse=False, copy_args=None):
         """Copy local file to remote file in parallel

@@ -1,16 +1,16 @@
 # This file is part of parallel-ssh.
-
+#
 # Copyright (C) 2014-2018 Panos Kittenis.
-
+#
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
 # License as published by the Free Software Foundation, version 2.1.
-
+#
 # This library is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 # Lesser General Public License for more details.
-
+#
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -48,7 +48,8 @@ class Tunnel(Thread):
                  password=None, port=None, pkey=None,
                  num_retries=DEFAULT_RETRIES,
                  retry_delay=RETRY_DELAY,
-                 allow_agent=True, timeout=None):
+                 allow_agent=True, timeout=None,
+                 channel_retries=5):
         """
         :param host: Remote SSH host to open tunnels with.
         :type host: str
@@ -98,6 +99,7 @@ class Tunnel(Thread):
         self.exception = None
         self.tunnel_open = Event()
         self._tunnels = []
+        self.channel_retries = channel_retries
 
     def __del__(self):
         self.cleanup()
@@ -217,6 +219,34 @@ class Tunnel(Thread):
             tunnel = spawn(self._start_tunnel, host, port)
             self._tunnels.append(tunnel)
 
+    def _open_channel(self, fw_host, fw_port, local_port):
+        channel = self.session.direct_tcpip_ex(
+            fw_host, fw_port, '127.0.0.1',
+            local_port)
+        while channel == LIBSSH2_ERROR_EAGAIN:
+            select((self.client.sock,), (self.client.sock,), ())
+            channel = self.session.direct_tcpip_ex(
+                fw_host, fw_port, '127.0.0.1',
+                local_port)
+        return channel
+
+    def _open_channel_retries(self, fw_host, fw_port, local_port,
+                              wait_time=0.1):
+        num_tries = 0
+        while num_tries < self.channel_retries:
+            try:
+                channel = self._open_channel(fw_host, fw_port, local_port)
+            except Exception:
+                num_tries += 1
+                if num_tries >= self.num_tries:
+                    raise
+                logger.error("Error opening channel to %s:%s, retries %s/%s",
+                             fw_host, fw_port, num_tries, self.num_retries)
+                sleep(wait_time)
+                wait_time *= 5
+                continue
+            return channel
+
     def _start_tunnel(self, fw_host, fw_port):
         try:
             listen_socket, listen_port = self._init_tunnel_sock()
@@ -239,15 +269,9 @@ class Tunnel(Thread):
         logger.debug("Client connected, forwarding %s:%s on"
                      " remote host to %s",
                      fw_host, fw_port, forward_addr)
+        local_port = forward_addr[1]
         try:
-            channel = self.session.direct_tcpip_ex(
-                fw_host, fw_port, '127.0.0.1',
-                forward_addr[1])
-            while channel == LIBSSH2_ERROR_EAGAIN:
-                select((self.client.sock,), (self.client.sock,), ())
-                channel = self.session.direct_tcpip_ex(
-                    fw_host, fw_port, '127.0.0.1',
-                    forward_addr[1])
+            channel = self._open_channel_retries(fw_host, fw_port, local_port)
         except Exception as ex:
             logger.exception("Could not establish channel to %s:%s:",
                              fw_host, fw_port)
@@ -273,7 +297,7 @@ class Tunnel(Thread):
         try:
             self._init_tunnel_client()
         except Exception as ex:
-            logger.exception("Tunnel initilisation failed with:")
+            # logger.error("Tunnel initilisation failed - %s", ex)
             self.exception = ex
             return
         logger.debug("Hub ID in run function: %s", get_hub().thread_ident)

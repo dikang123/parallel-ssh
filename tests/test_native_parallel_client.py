@@ -1,22 +1,21 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
 # This file is part of parallel-ssh.
-
+#
 # Copyright (C) 2015-2018 Panos Kittenis
-
+#
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
 # License as published by the Free Software Foundation, version 2.1.
-
+#
 # This library is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 # Lesser General Public License for more details.
-
+#
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+
 
 """Unittests for :mod:`pssh.ParallelSSHClient` class"""
 
@@ -35,7 +34,7 @@ import random
 import time
 
 
-import gevent
+from gevent import joinall
 from pssh.clients.native import ParallelSSHClient
 from pssh.exceptions import UnknownHostException, \
     AuthenticationException, ConnectionErrorException, SessionError, \
@@ -58,10 +57,11 @@ class ParallelSSHClientTest(unittest.TestCase):
     def setUpClass(cls):
         _mask = int('0600') if version_info <= (2,) else 0o600
         os.chmod(PKEY_FILENAME, _mask)
-        cls.server = OpenSSHServer()
-        cls.server.start_server()
         cls.host = '127.0.0.1'
-        cls.port = 2222
+        cls.port = 2223
+        cls.server = OpenSSHServer(listen_ip=cls.host, port=cls.port)
+        cls.server.start()
+        cls.server.wait_for_port()
         cls.cmd = 'echo me'
         cls.resp = u'me'
         cls.user_key = PKEY_FILENAME
@@ -79,6 +79,7 @@ class ParallelSSHClientTest(unittest.TestCase):
     def tearDownClass(cls):
         del cls.client
         cls.server.stop()
+        cls.server.join()
 
     def setUp(self):
         self.long_cmd = lambda lines: 'for (( i=0; i<%s; i+=1 )) do echo $i; sleep 1; done' % (lines,)
@@ -148,20 +149,24 @@ class ParallelSSHClientTest(unittest.TestCase):
         server = OpenSSHServer(listen_ip=host, port=self.port)
         server.start()
         server.wait_for_port()
-        hosts = [self.host, host]
-        client = ParallelSSHClient(hosts, port=self.port, pkey=self.user_key)
-        self.assertTrue(client.cmds is None)
-        self.assertTrue(client.get_last_output() is None)
-        client.run_command(self.cmd)
-        self.assertTrue(client.cmds is not None)
-        self.assertEqual(len(client.cmds), len(hosts))
-        output = client.get_last_output()
-        self.assertTrue(len(output), len(hosts))
-        client.join(output)
-        for host in hosts:
-            self.assertTrue(host in output)
-            exit_code = output[host].exit_code
-            self.assertTrue(exit_code == 0)
+        try:
+            hosts = [self.host, host]
+            client = ParallelSSHClient(hosts, port=self.port, pkey=self.user_key)
+            self.assertTrue(client.cmds is None)
+            self.assertTrue(client.get_last_output() is None)
+            client.run_command(self.cmd)
+            self.assertTrue(client.cmds is not None)
+            self.assertEqual(len(client.cmds), len(hosts))
+            output = client.get_last_output()
+            self.assertTrue(len(output), len(hosts))
+            client.join(output)
+            for host in hosts:
+                self.assertTrue(host in output)
+                exit_code = output[host].exit_code
+                self.assertTrue(exit_code == 0)
+        finally:
+            server.stop()
+            server.join()
 
     def test_pssh_client_no_stdout_non_zero_exit_code_immediate_exit(self):
         output = self.client.run_command('exit 1')
@@ -366,7 +371,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         remote_file_abspath = os.path.expanduser('~/' + remote_filepath)
         cmds = client.copy_file(local_filename, remote_filepath)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
         except Exception:
             raise
         finally:
@@ -380,12 +385,12 @@ class ParallelSSHClientTest(unittest.TestCase):
     def test_pssh_copy_file_per_host_args(self):
         """Test parallel copy file with per-host arguments"""
         host2, host3 = '127.0.0.6', '127.0.0.7'
-        server2 = OpenSSHServer(host2)
-        server3 = OpenSSHServer(host3)
+        server2 = OpenSSHServer(host2, port=self.port)
+        server3 = OpenSSHServer(host3, port=self.port)
         servers = [server2, server3]
         for server in servers:
-            server.start()
-            server.wait_for_port()
+            server.start_server()
+            # server.wait_for_port()
         time.sleep(1)
         hosts = [self.host, host2, host3]
 
@@ -408,7 +413,7 @@ class ParallelSSHClientTest(unittest.TestCase):
                                    num_retries=2)
         greenlets = client.copy_file('%(local_file)s', '%(remote_file)s',
                                      copy_args=copy_args)
-        gevent.joinall(greenlets)
+        joinall(greenlets)
 
         self.assertRaises(HostArgumentException, client.copy_file,
                           '%(local_file)s', '%(remote_file)s',
@@ -466,7 +471,7 @@ class ParallelSSHClientTest(unittest.TestCase):
             test_file.close()
         cmds = client.copy_file(local_test_path, remote_test_path_rel, recurse=True)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             for path in remote_file_paths:
                 self.assertTrue(os.path.isfile(path))
         finally:
@@ -505,7 +510,7 @@ class ParallelSSHClientTest(unittest.TestCase):
             test_file.close()
         cmds = client.copy_file(local_test_path, remote_test_path_abs, recurse=True)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             for path in remote_file_paths:
                 self.assertTrue(os.path.isfile(path))
         finally:
@@ -544,7 +549,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         os.chmod(remote_test_path_abs, mask)
         cmds = self.client.copy_file(local_test_path, remote_test_path_abs, recurse=True)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             raise Exception("Expected SFTPError exception")
         except SFTPError:
             pass
@@ -555,7 +560,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         remote_test_path_abs = os.sep.join((dir_name, remote_test_path))
         cmds = self.client.copy_file(local_file_path, remote_test_path_abs, recurse=True)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             raise Exception("Expected SFTPError exception on creating remote "
                             "directory")
         except SFTPError:
@@ -613,10 +618,10 @@ class ParallelSSHClientTest(unittest.TestCase):
             test_file.write(test_file_data)
             test_file.close()
         cmds = self.client.copy_remote_file(remote_test_path_abs, local_test_path)
-        self.assertRaises(ValueError, gevent.joinall, cmds, raise_error=True)
+        self.assertRaises(ValueError, joinall, cmds, raise_error=True)
         cmds = self.client.copy_remote_file(remote_test_path_abs, local_test_path,
                                             recurse=True)
-        gevent.joinall(cmds, raise_error=True)
+        joinall(cmds, raise_error=True)
         try:
             self.assertTrue(os.path.isdir(local_copied_dir))
             for path in local_file_paths:
@@ -630,7 +635,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         # Relative path
         cmds = self.client.copy_remote_file(remote_test_path_rel, local_test_path,
                                             recurse=True)
-        gevent.joinall(cmds, raise_error=True)
+        joinall(cmds, raise_error=True)
         try:
             self.assertTrue(os.path.isdir(local_copied_dir))
             for path in local_file_paths:
@@ -641,7 +646,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         # Different suffix
         cmds = self.client.copy_remote_file(remote_test_path_abs, local_test_path,
                                             suffix_separator='.', recurse=True)
-        gevent.joinall(cmds, raise_error=True)
+        joinall(cmds, raise_error=True)
         new_local_copied_dir = '.'.join([local_test_path, self.host])
         try:
             for path in local_file_paths:
@@ -654,12 +659,12 @@ class ParallelSSHClientTest(unittest.TestCase):
     def test_pssh_copy_remote_file_per_host_args(self):
         """Test parallel remote copy file with per-host arguments"""
         host2, host3 = '127.0.0.10', '127.0.0.11'
-        server2 = OpenSSHServer(host2)
-        server3 = OpenSSHServer(host3)
+        server2 = OpenSSHServer(host2, port=self.port)
+        server3 = OpenSSHServer(host3, port=self.port)
         servers = [server2, server3]
         for server in servers:
-            server.start()
-            server.wait_for_port()
+            server.start_server()
+            # server.wait_for_port()
         time.sleep(1)
         hosts = [self.host, host2, host3]
 
@@ -684,7 +689,7 @@ class ParallelSSHClientTest(unittest.TestCase):
                                    num_retries=2)
         greenlets = client.copy_remote_file('%(remote_file)s', '%(local_file)s',
                                             copy_args=copy_args)
-        gevent.joinall(greenlets)
+        joinall(greenlets)
 
         self.assertRaises(HostArgumentException, client.copy_remote_file,
                           '%(remote_file)s', '%(local_file)s',
@@ -737,9 +742,8 @@ class ParallelSSHClientTest(unittest.TestCase):
         get logs for all hosts"""
         # Make a second server on the same port as the first one
         host2 = '127.0.0.2'
-        server2 = OpenSSHServer(listen_ip=host2)
-        server2.start()
-        server2.wait_for_port()
+        server2 = OpenSSHServer(listen_ip=host2, port=self.port)
+        server2.start_server()
         hosts = [self.host, host2]
         client = ParallelSSHClient(hosts,
                                    port=self.port,
@@ -761,11 +765,10 @@ class ParallelSSHClientTest(unittest.TestCase):
     def test_pssh_hosts_iterator_hosts_modification(self):
         """Test using iterator as host list and modifying host list in place"""
         host2, host3 = '127.0.0.2', '127.0.0.3'
-        server2 = OpenSSHServer(listen_ip=host2) 
-        server3 = OpenSSHServer(listen_ip=host3)
+        server2 = OpenSSHServer(listen_ip=host2, port=self.port)
+        server3 = OpenSSHServer(listen_ip=host3, port=self.port)
         for _server in (server2, server3):
-            _server.start()
-            _server.wait_for_port()
+            _server.start_server()
         hosts = [self.host, '127.0.0.2']
         client = ParallelSSHClient(iter(hosts),
                                    port=self.port,
@@ -921,8 +924,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         fake_key = 'FAKE KEY'
         for host, port in hosts:
             server = OpenSSHServer(listen_ip=host, port=port)
-            server.start()
-            server.wait_for_port()
+            server.start_server()
             host_config[host] = {}
             host_config[host]['port'] = port
             host_config[host]['user'] = self.user
@@ -987,12 +989,11 @@ class ParallelSSHClientTest(unittest.TestCase):
 
     def test_per_host_tuple_args(self):
         host2, host3 = '127.0.0.4', '127.0.0.5'
-        server2 = OpenSSHServer(host2)
-        server3 = OpenSSHServer(host3)
+        server2 = OpenSSHServer(host2, port=self.port)
+        server3 = OpenSSHServer(host3, port=self.port)
         servers = [server2, server3]
         for server in servers:
-            server.start()
-            server.wait_for_port()
+            server.start_server()
         time.sleep(1)
         hosts = [self.host, host2, host3]
         host_args = ('arg1', 'arg2', 'arg3')
@@ -1025,12 +1026,11 @@ class ParallelSSHClientTest(unittest.TestCase):
 
     def test_per_host_dict_args(self):
         host2, host3 = '127.0.0.2', '127.0.0.3'
-        server2 = OpenSSHServer(host2)
-        server3 = OpenSSHServer(host3)
+        server2 = OpenSSHServer(host2, port=self.port)
+        server3 = OpenSSHServer(host3, port=self.port)
         servers = [server2, server3]
         for server in servers:
-            server.start()
-            server.wait_for_port()
+            server.start_server()
         hosts = [self.host, host2, host3]
         hosts_gen = (h for h in hosts)
         host_args = [dict(zip(('host_arg1', 'host_arg2',),
@@ -1290,7 +1290,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         remote_test_dir_abspath = os.path.expanduser('~/' + remote_test_dir)
         try:
             cmds = self.client.scp_send(local_filename, remote_filename)
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             time.sleep(.2)
             self.assertTrue(os.path.isdir(remote_test_dir_abspath))
             self.assertTrue(os.path.isfile(remote_file_abspath))
@@ -1314,7 +1314,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         remote_file_abspath = os.path.expanduser('~/' + remote_filepath)
         cmds = self.client.scp_send(local_filename, remote_filepath)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
         except Exception:
             raise
         else:
@@ -1333,7 +1333,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         cmds = self.client.scp_recv(
             'fakey fakey fake fake', 'equally fake')
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
         except Exception as ex:
             self.assertEqual(ex.host, self.host)
             self.assertIsInstance(ex, SCPError)
@@ -1375,11 +1375,11 @@ class ParallelSSHClientTest(unittest.TestCase):
             test_file.write(test_file_data)
             test_file.close()
         cmds = self.client.scp_recv(remote_test_path_abs, local_test_path)
-        self.assertRaises(SCPError, gevent.joinall, cmds, raise_error=True)
+        self.assertRaises(SCPError, joinall, cmds, raise_error=True)
         cmds = self.client.scp_recv(remote_test_path_abs, local_test_path,
                                     recurse=True)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             self.assertTrue(os.path.isdir(local_copied_dir))
             for path in local_file_paths:
                 self.assertTrue(os.path.isfile(path))
@@ -1393,7 +1393,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         cmds = self.client.scp_recv(remote_test_path_rel, local_test_path,
                                     recurse=True)
         try:
-            gevent.joinall(cmds, raise_error=True)
+            joinall(cmds, raise_error=True)
             self.assertTrue(os.path.isdir(local_copied_dir))
             for path in local_file_paths:
                 self.assertTrue(os.path.isfile(path))
