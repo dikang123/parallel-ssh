@@ -238,7 +238,7 @@ class Tunnel(Thread):
                 channel = self._open_channel(fw_host, fw_port, local_port)
             except Exception:
                 num_tries += 1
-                if num_tries >= self.num_tries:
+                if num_tries >= self.num_retries:
                     raise
                 logger.error("Error opening channel to %s:%s, retries %s/%s",
                              fw_host, fw_port, num_tries, self.num_retries)

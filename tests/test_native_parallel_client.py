@@ -60,8 +60,7 @@ class ParallelSSHClientTest(unittest.TestCase):
         cls.host = '127.0.0.1'
         cls.port = 2223
         cls.server = OpenSSHServer(listen_ip=cls.host, port=cls.port)
-        cls.server.start()
-        cls.server.wait_for_port()
+        cls.server.start_server()
         cls.cmd = 'echo me'
         cls.resp = u'me'
         cls.user_key = PKEY_FILENAME
@@ -79,7 +78,6 @@ class ParallelSSHClientTest(unittest.TestCase):
     def tearDownClass(cls):
         del cls.client
         cls.server.stop()
-        cls.server.join()
 
     def setUp(self):
         self.long_cmd = lambda lines: 'for (( i=0; i<%s; i+=1 )) do echo $i; sleep 1; done' % (lines,)
@@ -147,8 +145,7 @@ class ParallelSSHClientTest(unittest.TestCase):
     def test_get_last_output(self):
         host = '127.0.0.9'
         server = OpenSSHServer(listen_ip=host, port=self.port)
-        server.start()
-        server.wait_for_port()
+        server.start_server()
         try:
             hosts = [self.host, host]
             client = ParallelSSHClient(hosts, port=self.port, pkey=self.user_key)
@@ -166,7 +163,6 @@ class ParallelSSHClientTest(unittest.TestCase):
                 self.assertTrue(exit_code == 0)
         finally:
             server.stop()
-            server.join()
 
     def test_pssh_client_no_stdout_non_zero_exit_code_immediate_exit(self):
         output = self.client.run_command('exit 1')

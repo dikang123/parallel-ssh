@@ -35,10 +35,9 @@ SSHD_CONFIG_TMPL = os.path.abspath(os.path.sep.join(
 SSHD_CONFIG = os.path.abspath(os.path.sep.join([DIR_NAME, 'sshd_config']))
 
 
-class OpenSSHServer(Thread):
+class OpenSSHServer(object):
 
     def __init__(self, listen_ip='127.0.0.1', port=2222):
-        Thread.__init__(self)
         self.listen_ip = listen_ip
         self.port = port
         self.server_proc = None
@@ -47,10 +46,6 @@ class OpenSSHServer(Thread):
             for _ in range(8))
         self._fix_masks()
         self.make_config()
-
-    def run(self):
-        self.start_server()
-        self.server_proc.wait()
 
     def _fix_masks(self):
         _mask = int('0600') if version_info <= (2,) else 0o600
@@ -95,3 +90,14 @@ class OpenSSHServer(Thread):
 
     def __del__(self):
         self.stop()
+
+
+class ThreadedOpenSSHServer(Thread, OpenSSHServer):
+
+    def __init__(self, listen_ip='127.0.0.1', port=2222):
+        Thread.__init__(self)
+        OpenSSHServer.__init__(self, listen_ip=listen_ip, port=port)
+
+    def run(self):
+        self.start_server()
+        self.server_proc.wait()

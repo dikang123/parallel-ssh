@@ -39,7 +39,7 @@ from pssh.exceptions import UnknownHostException, \
     ProxyError
 from pssh import logger as pssh_logger
 
-from .embedded_server.openssh import OpenSSHServer
+from .embedded_server.openssh import ThreadedOpenSSHServer, OpenSSHServer
 from .base_ssh2_test import PKEY_FILENAME, PUB_FILE
 
 
@@ -197,8 +197,8 @@ class TunnelTest(unittest.TestCase):
     def test_tunnel_remote_host_timeout(self):
         remote_host = '127.0.0.18'
         proxy_host = '127.0.0.19'
-        server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
-        remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
+        server = ThreadedOpenSSHServer(listen_ip=proxy_host, port=self.port)
+        remote_server = ThreadedOpenSSHServer(listen_ip=remote_host, port=self.port)
         for _server in (server, remote_server):
             _server.start()
             _server.wait_for_port()
@@ -222,7 +222,8 @@ class TunnelTest(unittest.TestCase):
 
     def test_single_tunnel_multi_hosts(self):
         remote_host = '127.0.0.8'
-        remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
+        remote_server = ThreadedOpenSSHServer(
+            listen_ip=remote_host, port=self.port)
         remote_server.start()
         remote_server.wait_for_port()
         hosts = [remote_host, remote_host, remote_host]
@@ -240,11 +241,12 @@ class TunnelTest(unittest.TestCase):
             del client
         finally:
             remote_server.stop()
-            remote_server.join()            
+            remote_server.join()
 
     def test_single_tunnel_multi_hosts_timeout(self):
         remote_host = '127.0.0.8'
-        remote_server = OpenSSHServer(listen_ip=remote_host, port=self.port)
+        remote_server = ThreadedOpenSSHServer(
+            listen_ip=remote_host, port=self.port)
         remote_server.start()
         remote_server.wait_for_port()
         hosts = [remote_host, remote_host, remote_host]

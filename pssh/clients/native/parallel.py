@@ -349,7 +349,8 @@ class ParallelSSHClient(BaseParallelSSHClient):
                      host, host in self.host_clients)
         with self._clients_lock:
             if host not in self.host_clients or self.host_clients[host] is None:
-                _user, _port, _password, _pkey = self._get_host_config_values(host)
+                _user, _port, _password, _pkey = self._get_host_config_values(
+                    host)
                 proxy_host = None if self.proxy_host is None else '127.0.0.1'
                 if proxy_host is not None:
                     auth_thread_pool = False
@@ -364,14 +365,16 @@ class ParallelSSHClient(BaseParallelSSHClient):
                         try:
                             _port = self._tunnel_out_q.pop()
                         except IndexError:
-                            logger.debug("Waiting on tunnel to open listening port")
+                            logger.debug(
+                                "Waiting on tunnel to open listening port")
                             sleep(.5)
                             _wait += .5
                         else:
                             break
                 self.host_clients[host] = SSHClient(
-                    host, user=_user, password=_password, port=_port, pkey=_pkey,
-                    num_retries=self.num_retries, timeout=self.timeout,
+                    host, user=_user, password=_password, port=_port,
+                    pkey=_pkey, num_retries=self.num_retries,
+                    timeout=self.timeout,
                     allow_agent=self.allow_agent, retry_delay=self.retry_delay,
                     proxy_host=proxy_host, _auth_thread_pool=auth_thread_pool)
 
