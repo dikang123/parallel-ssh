@@ -167,26 +167,22 @@ class Tunnel(Thread):
                     except Exception as ex:
                         logger.error(
                             "Error sending data to forward socket - %s", ex)
-                        sleep(.1)
+                        sleep(.5)
                         continue
                     try:
                         size, data = channel.read()
                     except Exception as ex:
                         logger.error("Error reading from channel - %s", ex)
-                        sleep(.1)
+                        sleep(.5)
 
     def _init_tunnel_sock(self):
         tunnel_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tunnel_socket.settimeout(self.timeout)
-        try:
-            tunnel_socket.bind(('127.0.0.1', 0))
-            tunnel_socket.listen(0)
-            listen_port = tunnel_socket.getsockname()[1]
-            self._sockets.append(tunnel_socket)
-            return tunnel_socket, listen_port
-        except Exception:
-            tunnel_socket.close()
-            raise
+        tunnel_socket.bind(('127.0.0.1', 0))
+        tunnel_socket.listen(0)
+        listen_port = tunnel_socket.getsockname()[1]
+        self._sockets.append(tunnel_socket)
+        return tunnel_socket, listen_port
 
     def _init_tunnel_client(self):
         self.client = SSHClient(self.host, user=self.user, port=self.port,
@@ -238,7 +234,7 @@ class Tunnel(Thread):
                 channel = self._open_channel(fw_host, fw_port, local_port)
             except Exception:
                 num_tries += 1
-                if num_tries >= self.num_retries:
+                if num_tries > self.num_retries:
                     raise
                 logger.error("Error opening channel to %s:%s, retries %s/%s",
                              fw_host, fw_port, num_tries, self.num_retries)
@@ -257,11 +253,10 @@ class Tunnel(Thread):
         logger.debug("Tunnel listening on 127.0.0.1:%s on hub %s",
                      listen_port, get_hub().thread_ident)
         self.out_q.append(listen_port)
-        logger.debug("Put port %s in queue", listen_port)
         try:
             forward_sock, forward_addr = listen_socket.accept()
         except Exception as ex:
-            logger.error("Error accepting connection to tunnel - %s", ex)
+            logger.error("Error accepting connection from client - %s", ex)
             self.exception = ex
             listen_socket.close()
             return
@@ -282,6 +277,9 @@ class Tunnel(Thread):
         source = spawn(self._read_forward_sock, forward_sock, channel)
         dest = spawn(self._read_channel, forward_sock, channel)
         logger.debug("Waiting for read/write greenlets")
+        self._wait_send_receive_lets(source, dest, channel, forward_sock)
+
+    def _wait_send_receive_lets(self, source, dest, channel, forward_sock):
         try:
             joinall((source, dest), raise_error=True)
         except Exception as ex:

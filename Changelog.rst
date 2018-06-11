@@ -17,7 +17,7 @@ Fixes
 
 * Native client tunneling would not work correctly - #123.
 * ``timeout`` setting was not applied to native client sockets.
-* Native client would have ``SessionError`` instead of ``Timeout`` exceptions on timeout errors with connecting to hosts.
+* Native client would have ``SessionError`` instead of ``Timeout`` exceptions on timeout errors connecting to hosts.
 
 1.6.3
 ++++++

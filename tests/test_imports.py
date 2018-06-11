@@ -38,3 +38,6 @@ class ImportTestCase(unittest.TestCase):
         import pssh.clients.miko
         import pssh.clients.native
         import pssh.clients
+
+    def test_tunnel_imports(self):
+        import pssh.tunnel

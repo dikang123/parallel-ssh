@@ -19,7 +19,6 @@ from __future__ import print_function
 
 import unittest
 import pwd
-import logging
 import os
 import shutil
 import sys
@@ -30,21 +29,17 @@ import random
 import time
 from collections import deque
 
-from gevent import sleep, spawn, Timeout as GTimeout
+from gevent import sleep, spawn, Timeout as GTimeout, socket
 from pssh.clients.native.tunnel import Tunnel
 from pssh.clients.native import SSHClient, ParallelSSHClient
 from pssh.exceptions import UnknownHostException, \
     AuthenticationException, ConnectionErrorException, SessionError, \
     HostArgumentException, SFTPError, SFTPIOError, Timeout, SCPError, \
     ProxyError
-from pssh import logger as pssh_logger
+from ssh2.exceptions import ChannelFailure
 
 from .embedded_server.openssh import ThreadedOpenSSHServer, OpenSSHServer
 from .base_ssh2_test import PKEY_FILENAME, PUB_FILE
-
-
-pssh_logger.setLevel(logging.DEBUG)
-logging.basicConfig()
 
 
 class TunnelTest(unittest.TestCase):
@@ -68,6 +63,67 @@ class TunnelTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.stop()
 
+    def test_tunnel_retries(self):
+        local_port = 3050
+        fw_host, fw_port = '127.0.0.1', 2100
+        t = Tunnel(self.proxy_host, deque(), deque(), port=self.port,
+                   pkey=self.user_key, num_retries=2)
+        t._init_tunnel_client()
+        self.assertRaises(ChannelFailure, t._open_channel_retries, fw_host, fw_port, local_port)
+
+    def _connect_client(self, _socket):
+        while True:
+            _socket.read()
+
+    def test_tunnel_channel_eof(self):
+        remote_host = '127.0.0.59'
+        server = OpenSSHServer(listen_ip=remote_host, port=self.port)
+        server.start_server()
+        in_q, out_q = deque(), deque()
+        try:
+            tunnel = Tunnel(self.proxy_host, in_q, out_q, port=self.port,
+                            pkey=self.user_key, num_retries=1)
+            tunnel._init_tunnel_client()
+            channel = tunnel._open_channel_retries(self.proxy_host, self.port, 2150)
+            self.assertFalse(channel.eof())
+            channel.close()
+            listen_socket, listen_port = tunnel._init_tunnel_sock()
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect(('127.0.0.1', listen_port))
+            client = spawn(self._connect_client, client_socket)
+            tunnel._read_channel(client_socket, channel)
+            tunnel._read_forward_sock(client_socket, channel)
+            self.assertTrue(channel.eof())
+            client.kill()
+        finally:
+            server.stop()
+
+    def test_tunnel_sock_failure(self):
+        remote_host = '127.0.0.59'
+        server = OpenSSHServer(listen_ip=remote_host, port=self.port)
+        server.start_server()
+        in_q, out_q = deque(), deque()
+        try:
+            tunnel = Tunnel(self.proxy_host, in_q, out_q, port=self.port,
+                            pkey=self.user_key, num_retries=1)
+            tunnel._init_tunnel_client()
+            channel = tunnel._open_channel_retries(self.proxy_host, self.port, 2150)
+            self.assertFalse(channel.eof())
+            listen_socket, listen_port = tunnel._init_tunnel_sock()
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect(('127.0.0.1', listen_port))
+            client_socket.send(b'blah\n')
+            client_socket.close()
+            gl1 = spawn(tunnel._read_channel, client_socket, channel)
+            gl2 = spawn(tunnel._read_forward_sock, client_socket, channel)
+            sleep(1)
+            gl1.kill()
+            gl2.kill()
+            tunnel._sockets.append(None)
+            tunnel.cleanup()
+        finally:
+            server.stop()
+
     def test_tunnel_init(self):
         proxy_host = '127.0.0.49'
         server = OpenSSHServer(listen_ip=proxy_host, port=self.port)
@@ -86,6 +142,30 @@ class TunnelTest(unittest.TestCase):
             self.assertTrue(tunnel.tunnel_open.is_set())
             self.assertIsNotNone(tunnel.client)
             tunnel.cleanup()
+            for _sock in tunnel._sockets:
+                self.assertTrue(_sock.closed)
+        finally:
+            server.stop()
+
+    def test_tunnel_channel_exc(self):
+        remote_host = '127.0.0.69'
+        server = OpenSSHServer(listen_ip=remote_host, port=self.port)
+        server.start_server()
+        in_q, out_q = deque(), deque()
+        try:
+            tunnel = Tunnel(remote_host, in_q, out_q, port=self.port,
+                            pkey=self.user_key, num_retries=1)
+            tunnel._init_tunnel_client()
+            tunnel_accept = spawn(tunnel._start_tunnel, '127.0.0.255', self.port)
+            while len(out_q) == 0:
+                sleep(1)
+            listen_port = out_q.pop()
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect(('127.0.0.1', listen_port))
+            client = spawn(self._connect_client, client_socket)
+            sleep(1)
+            client.kill()
+            tunnel_accept.kill()
             for _sock in tunnel._sockets:
                 self.assertTrue(_sock.closed)
         finally:

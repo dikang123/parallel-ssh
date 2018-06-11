@@ -12,7 +12,7 @@ from pssh.clients.native import SSHClient, logger as ssh_logger
 from ssh2.session import Session
 from ssh2.exceptions import SocketDisconnectError
 from pssh.exceptions import AuthenticationException, ConnectionErrorException, \
-    SessionError
+    SessionError, SFTPIOError, SFTPError, SCPError
 
 
 ssh_logger.setLevel(logging.DEBUG)
@@ -20,6 +20,28 @@ logging.basicConfig()
 
 
 class SSH2ClientTest(SSH2TestCase):
+
+    def test_context_manager(self):
+        with SSHClient(self.host, port=self.port,
+                       pkey=self.user_key,
+                       num_retries=1) as client:
+            self.assertIsInstance(client, SSHClient)
+
+    def test_sftp_fail(self):
+        sftp = self.client._make_sftp()
+        self.assertRaises(SFTPIOError, self.client._mkdir, sftp, '/blah')
+        self.assertRaises(SFTPError, self.client.sftp_put, sftp, 'a file', '/blah')
+
+    def test_scp_fail(self):
+        self.assertRaises(SCPError, self.client.scp_recv, 'fakey', 'fake')
+        try:
+            os.mkdir('adir')
+        except OSError:
+            pass
+        try:
+            self.assertRaises(ValueError, self.client.scp_send, 'adir', 'fake')
+        finally:
+            os.rmdir('adir')
 
     def test_execute(self):
         channel, host, stdout, stderr, stdin = self.client.run_command(
@@ -114,4 +136,4 @@ class SSH2ClientTest(SSH2TestCase):
     def test_retry_failure(self):
         self.assertRaises(ConnectionErrorException,
                           SSHClient, self.host, port=12345,
-                          num_retries=2)
+                          num_retries=2, _auth_thread_pool=False)
