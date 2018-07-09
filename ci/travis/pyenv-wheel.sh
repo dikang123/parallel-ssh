@@ -2,7 +2,7 @@
 
 brew install pyenv || brew outdated pyenv || brew upgrade pyenv
 
-export PYENV_VERSION=$PYENV
+export PYENV_VERSION=${PYENV:-3.6.4}
 if [[ ! -d "$HOME/.pyenv/versions/$PYENV_VERSION" ]]; then
     pyenv install $PYENV_VERSION
 fi
@@ -15,7 +15,7 @@ set -x
 
 which python
 python -m pip install -U virtualenv
-virtualenv -p "$(which python)" venv
+python -m virtualenv -p "$(which python)" venv
 
 set +x
 source venv/bin/activate
