@@ -151,6 +151,7 @@ jobs:
     - stage: build packages
       env:
         - WHEELS=1
+        - OPENSSL=openssl-1.0.2o
       os: linux
       python: 3.6
       before_install: skip
