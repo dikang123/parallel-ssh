@@ -292,10 +292,9 @@ class ParallelSSHClientTest(unittest.TestCase):
         client = ParallelSSHClient([self.host, self.host],
                                    port=self.port,
                                    pkey=self.user_key,
-                                   timeout=0,
-                                   num_retries=1)
+                                   timeout=0)
         cmd = spawn(client.run_command, 'sleep 1', stop_on_errors=False)
-        output = cmd.get(timeout=2)
+        output = cmd.get(timeout=3)
         self.assertTrue(output[self.host].exception is None)
 
     def test_pssh_client_long_running_command_exit_codes(self):
