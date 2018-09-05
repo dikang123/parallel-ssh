@@ -289,7 +289,10 @@ class ParallelSSHClientTest(unittest.TestCase):
                               ConnectionErrorException)
 
     def test_zero_timeout(self):
-        client = ParallelSSHClient([self.host, self.host],
+        host = '127.0.0.2'
+        server = OpenSSHServer(listen_ip=host, port=self.port)
+        server.start_server()
+        client = ParallelSSHClient([self.host, host],
                                    port=self.port,
                                    pkey=self.user_key,
                                    timeout=0)
